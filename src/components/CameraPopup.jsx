@@ -80,6 +80,7 @@ export default function CameraPopup({ camera }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [showHeatmap, setShowHeatmap] = useState(false);
 
   // Auto-refresh image every 5 seconds to simulate real-time feed
   useEffect(() => {
@@ -113,7 +114,7 @@ export default function CameraPopup({ camera }) {
       const formData = new FormData();
       formData.append('file', imageBlob, 'camera.jpg');
 
-      const predictResponse = await fetch(`${API_URL}/predict`, {
+      const predictResponse = await fetch(`${API_URL}/predict?heatmap=true`, {
         method: 'POST',
         body: formData,
       });
@@ -136,9 +137,9 @@ export default function CameraPopup({ camera }) {
 
   return (
     <div className="camera-popup">
-      <div className="camera-popup__img-wrap">
+      <div className="camera-popup__img-wrap" style={{ position: 'relative' }}>
         <img
-          src={imageUrl}
+          src={showHeatmap && prediction?.heatmap_base64 ? prediction.heatmap_base64 : imageUrl}
           alt={`Camera ${camera.name}`}
           loading="eager"
           decoding="async"
@@ -146,6 +147,18 @@ export default function CameraPopup({ camera }) {
             e.target.src = `https://placehold.co/400x300/e2e8f0/64748b?text=Camera+Offline`;
           }}
         />
+        {prediction?.heatmap_base64 && (
+          <button 
+            onClick={() => setShowHeatmap(!showHeatmap)}
+            style={{ 
+              position: 'absolute', top: 8, right: 8, background: showHeatmap ? '#ef4444' : 'rgba(15, 23, 42, 0.7)', 
+              color: 'white', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '11px', 
+              fontWeight: 600, cursor: 'pointer', zIndex: 10, backdropFilter: 'blur(4px)', transition: 'all 0.2s'
+            }}
+          >
+            {showHeatmap ? "Hiển thị Ảnh thật" : "Hiển thị Heatmap AI"}
+          </button>
+        )}
       </div>
       <div className="camera-popup__info">
         <div className="camera-popup__title">{camera.name}</div>
