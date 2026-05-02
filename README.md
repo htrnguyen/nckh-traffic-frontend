@@ -36,4 +36,6 @@ Dự án được cấu hình để triển khai một cú nhấp chuột lên *
 3. Không cần cấu hình thêm, Vercel sẽ tự động build với framework Vite.
 
 ---
-*Dự án Nghiên cứu Khoa học (NCKH) - Thực hiện bởi Nguyễn.*
+## 📄 Bản quyền (Copyright & License)
+© 2026 Nguyễn (htrnguyen). Đề tài Nghiên cứu Khoa học.
+Mã nguồn này được phát triển phục vụ mục đích nghiên cứu học thuật. Vui lòng không sao chép hoặc tái sử dụng cho mục đích thương mại khi chưa có sự cho phép.
