@@ -7,12 +7,25 @@ import {
   LuMapPin,
   LuClock,
   LuCar,
+  LuBike,
   LuNavigation,
   LuCornerUpLeft,
   LuCornerUpRight,
   LuUndo2,
   LuMoveUp,
+  LuVideo,
+  LuArrowUpDown,
+  LuX,
+  LuCheck,
 } from "react-icons/lu";
+import { MdTwoWheeler, MdDirectionsWalk } from "react-icons/md";
+
+const TRAVEL_MODES = [
+  { id: "car", label: "Ô tô", icon: LuCar },
+  { id: "motorbike", label: "Xe máy", icon: MdTwoWheeler },
+  { id: "bicycle", label: "Xe đạp", icon: LuBike },
+  { id: "walking", label: "Đi bộ", icon: MdDirectionsWalk },
+];
 
 const SLIDER_LABELS = ["Hiện tại", "+1 giờ", "+2 giờ", "+4 giờ"];
 
@@ -22,6 +35,7 @@ export default function ControlPanel({
   destText,
   onOriginSelect,
   onDestinationSelect,
+  onSwapLocations,
   sliderValue,
   onSliderChange,
   eta,
@@ -29,32 +43,34 @@ export default function ControlPanel({
   trafficLevel,
   navigationSteps,
   onStartNavigation,
+  travelMode,
+  onTravelModeChange,
+  routeTraffic,
 }) {
   const [localDestText, setLocalDestText] = useState("");
   const [originSuggestions, setOriginSuggestions] = useState([]);
   const [destSuggestions, setDestSuggestions] = useState([]);
+  const [activeDropdown, setActiveDropdown] = useState(null); // "origin" | "dest"
   const [isExpanded, setIsExpanded] = useState(false);
-
-  // Store raw data to find coordinates when user selects a datalist option
-  const rawOriginData = useRef([]);
-  const rawDestData = useRef([]);
 
   // Sync prop destText to local state when map is clicked
   useEffect(() => {
-    if (destText) {
+    if (destText !== undefined && destText !== null) {
       setLocalDestText(destText);
     }
   }, [destText]);
 
-  const fetchSuggestions = async (query, setSuggestions, rawRef) => {
-    if (!query || query.length < 3) return;
+  const fetchSuggestions = async (query, setSuggestions) => {
+    if (!query || query.length < 3) {
+      setSuggestions([]);
+      return;
+    }
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&countrycodes=vn&limit=5`,
       );
       const data = await res.json();
-      rawRef.current = data;
-      setSuggestions(data.map((item) => item.display_name));
+      setSuggestions(data);
     } catch (err) {
       console.error("Lỗi khi tìm kiếm địa điểm", err);
     }
@@ -62,7 +78,7 @@ export default function ControlPanel({
 
   useEffect(() => {
     const timer = setTimeout(
-      () => fetchSuggestions(originText, setOriginSuggestions, rawOriginData),
+      () => fetchSuggestions(originText, setOriginSuggestions),
       600,
     );
     return () => clearTimeout(timer);
@@ -70,38 +86,48 @@ export default function ControlPanel({
 
   useEffect(() => {
     const timer = setTimeout(
-      () => fetchSuggestions(localDestText, setDestSuggestions, rawDestData),
+      () => fetchSuggestions(localDestText, setDestSuggestions),
       600,
     );
     return () => clearTimeout(timer);
   }, [localDestText]);
 
-  // Handle Datalist selection
   const handleOriginChange = (e) => {
-    const val = e.target.value;
-    setOriginText(val);
-    const match = rawOriginData.current.find(
-      (item) => item.display_name === val,
-    );
-    if (match) {
-      onOriginSelect?.({
-        text: val,
-        lat: parseFloat(match.lat),
-        lon: parseFloat(match.lon),
-      });
-    }
+    setOriginText(e.target.value);
+    setActiveDropdown("origin");
   };
 
   const handleDestChange = (e) => {
-    const val = e.target.value;
-    setLocalDestText(val);
-    const match = rawDestData.current.find((item) => item.display_name === val);
-    if (match) {
-      onDestinationSelect?.({
-        text: val,
-        lat: parseFloat(match.lat),
-        lon: parseFloat(match.lon),
-      });
+    setLocalDestText(e.target.value);
+    setActiveDropdown("dest");
+  };
+
+  const selectSuggestion = (item, type) => {
+    const point = {
+      text: item.display_name,
+      lat: parseFloat(item.lat),
+      lon: parseFloat(item.lon),
+    };
+    if (type === "origin") {
+      setOriginText(item.display_name);
+      onOriginSelect?.(point);
+      setActiveDropdown(null);
+    } else {
+      setLocalDestText(item.display_name);
+      onDestinationSelect?.(point);
+      setActiveDropdown(null);
+    }
+  };
+
+  const clearInput = (type) => {
+    if (type === "origin") {
+      setOriginText("");
+      onOriginSelect?.(null);
+      setOriginSuggestions([]);
+    } else {
+      setLocalDestText("");
+      onDestinationSelect?.(null);
+      setDestSuggestions([]);
     }
   };
 
@@ -190,38 +216,87 @@ export default function ControlPanel({
         style={{ display: isExpanded ? "flex" : "none", paddingTop: 0 }}
       >
         {/* Route Inputs */}
-        <div className="route-inputs">
+        <div className="route-inputs" style={{ position: "relative" }}>
           <div className="route-inputs__line" />
-          <div className="route-input">
+          
+          <div className="route-input" style={{ position: "relative" }}>
             <LuLocateFixed size={18} className="icon-origin" />
             <input
               type="text"
-              list="origin-suggestions"
               placeholder="Điểm đi (Ví dụ: Chợ Bến Thành)"
               value={originText}
               onChange={handleOriginChange}
+              onFocus={() => setActiveDropdown("origin")}
+              onBlur={() => setTimeout(() => setActiveDropdown(null), 200)}
             />
-            <datalist id="origin-suggestions">
-              {originSuggestions.map((s, idx) => (
-                <option key={idx} value={s} />
-              ))}
-            </datalist>
+            {originText && (
+              <button className="clear-input-btn" onClick={() => clearInput("origin")}>
+                <LuX size={16} />
+              </button>
+            )}
+            {activeDropdown === "origin" && originSuggestions.length > 0 && (
+              <ul className="autocomplete-dropdown">
+                {originSuggestions.map((s, idx) => (
+                  <li key={idx} onMouseDown={() => selectSuggestion(s, "origin")}>
+                    <LuMapPin size={14} style={{ minWidth: 14 }} />
+                    <span className="truncate">{s.display_name}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          <div className="route-input">
+
+          <div className="route-input" style={{ position: "relative" }}>
             <LuMapPin size={18} className="icon-dest" />
             <input
               type="text"
-              list="dest-suggestions"
               placeholder="Điểm đến (Ví dụ: Đại học Tôn Đức Thắng)"
               value={localDestText}
               onChange={handleDestChange}
+              onFocus={() => setActiveDropdown("dest")}
+              onBlur={() => setTimeout(() => setActiveDropdown(null), 200)}
             />
-            <datalist id="dest-suggestions">
-              {destSuggestions.map((s, idx) => (
-                <option key={idx} value={s} />
-              ))}
-            </datalist>
+            {localDestText && (
+              <button className="clear-input-btn" onClick={() => clearInput("dest")}>
+                <LuX size={16} />
+              </button>
+            )}
+            {activeDropdown === "dest" && destSuggestions.length > 0 && (
+              <ul className="autocomplete-dropdown">
+                {destSuggestions.map((s, idx) => (
+                  <li key={idx} onMouseDown={() => selectSuggestion(s, "dest")}>
+                    <LuMapPin size={14} style={{ minWidth: 14 }} />
+                    <span className="truncate">{s.display_name}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
+
+          <button className="swap-locations-btn" onClick={onSwapLocations} title="Đảo ngược vị trí">
+            <LuArrowUpDown size={18} />
+          </button>
+        </div>
+
+        <div className="divider" />
+
+        {/* Transport Mode Selector */}
+        <div className="mode-selector">
+          {TRAVEL_MODES.map((mode) => {
+            const Icon = mode.icon;
+            const isActive = travelMode === mode.id;
+            return (
+              <button
+                key={mode.id}
+                className={`mode-selector__btn ${isActive ? "mode-selector__btn--active" : ""}`}
+                onClick={() => onTravelModeChange?.(mode.id)}
+                title={mode.label}
+              >
+                <Icon size={20} />
+                <span>{mode.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         <div className="divider" />
@@ -262,7 +337,10 @@ export default function ControlPanel({
             >
               <div className="summary-left">
                 <div className="summary-icon">
-                  <LuCar size={20} />
+                  {(() => {
+                    const SummaryIcon = TRAVEL_MODES.find(m => m.id === travelMode)?.icon || LuCar;
+                    return <SummaryIcon size={20} />;
+                  })()}
                 </div>
                 <div>
                   <div
@@ -292,6 +370,75 @@ export default function ControlPanel({
                 </span>
               </div>
             </div>
+
+            {/* AI Traffic Analysis */}
+            {routeTraffic && routeTraffic.camerasAnalyzed > 0 && (
+              <div style={{
+                background: '#f0f9ff',
+                border: '1px solid #bae6fd',
+                borderRadius: 8,
+                padding: '10px 12px',
+                fontSize: 12,
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px"
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, color: '#0369a1' }}>
+                    <LuRoute size={14} />
+                    Phân tích AI ({routeTraffic.camerasAnalyzed} camera dọc tuyến)
+                  </div>
+                  {routeTraffic.congestionPoints === 0 && (
+                    <span style={{ color: '#16a34a', fontWeight: 600, fontSize: 11, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <LuCheck size={14} /> Thông thoáng
+                    </span>
+                  )}
+                </div>
+
+                <div style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "6px",
+                  maxHeight: "150px",
+                  overflowY: "auto",
+                  paddingRight: "4px"
+                }} className="custom-scrollbar">
+                  {routeTraffic.predictions.map((p, idx) => {
+                    const density = p.prediction.density_level;
+                    const colors = {
+                      low: { bg: "#dcfce7", text: "#16a34a", dot: "#22c55e", label: "Thông thoáng" },
+                      moderate: { bg: "#fef9c3", text: "#ca8a04", dot: "#eab308", label: "Đông vừa" },
+                      heavy: { bg: "#fee2e2", text: "#dc2626", dot: "#ef4444", label: "Kẹt xe" },
+                      severe: { bg: "#7f1d1d", text: "#fca5a5", dot: "#ef4444", label: "Kẹt cứng" },
+                      unknown: { bg: "#f1f5f9", text: "#64748b", dot: "#94a3b8", label: "Không rõ" }
+                    };
+                    const c = colors[density] || colors.unknown;
+                    
+                    return (
+                      <div key={idx} style={{ 
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        background: "#fff", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e0f2fe"
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", overflow: "hidden" }}>
+                          <LuVideo size={14} color="#0ea5e9" style={{flexShrink: 0}} />
+                          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontWeight: 500 }}>
+                            {p.camera_name}
+                          </span>
+                        </div>
+                        <div style={{ 
+                          display: "flex", alignItems: "center", gap: "4px",
+                          background: c.bg, color: c.text, padding: "2px 6px", borderRadius: "4px",
+                          fontWeight: 600, fontSize: 10, flexShrink: 0
+                        }}>
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.dot }} />
+                          {c.label} ({p.prediction.total_count} xe)
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Navigation Steps */}
             {navigationSteps && navigationSteps.length > 0 && (

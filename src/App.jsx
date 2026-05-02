@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   LuLocateFixed,
   LuX,
@@ -8,31 +8,35 @@ import {
   LuMoveUp,
   LuRuler,
 } from "react-icons/lu";
-import TopBar from "./components/TopBar";
 import ControlPanel from "./components/ControlPanel";
 import TrafficMap from "./components/TrafficMap";
 import "./index.css";
 
 // Navigation UI Overlay (Mô phỏng Giao diện Lái xe)
-function NavigationOverlay({ steps, eta, distance, onExit }) {
+const NavigationOverlay = React.memo(function NavigationOverlay({
+  steps,
+  eta,
+  distance,
+  routeTraffic,
+  onExit,
+}) {
   const currentStep =
     steps && steps.length > 0
       ? steps[0]
       : { instruction: "Đi thẳng đến đích", distance: distance };
 
   const getIcon = (text) => {
-    if (text.includes("trái")) return <LuCornerUpLeft size={48} />;
-    if (text.includes("phải")) return <LuCornerUpRight size={48} />;
-    if (text.includes("quay đầu")) return <LuUndo2 size={48} />;
+    const t = text.toLowerCase();
+    if (t.includes("trái") || t.includes("left")) return <LuCornerUpLeft size={48} />;
+    if (t.includes("phải") || t.includes("right")) return <LuCornerUpRight size={48} />;
+    if (t.includes("quay đầu") || t.includes("u-turn")) return <LuUndo2 size={48} />;
     return <LuMoveUp size={48} />;
   };
 
   return (
     <div className="navigation-overlay">
       <div className="nav-header">
-        <span className="nav-icon">
-          {getIcon(currentStep.instruction)}
-        </span>
+        <span className="nav-icon">{getIcon(currentStep.instruction)}</span>
         <div>
           <div className="nav-main">{currentStep.instruction}</div>
           <div className="nav-sub">
@@ -45,7 +49,18 @@ function NavigationOverlay({ steps, eta, distance, onExit }) {
       <div className="nav-footer">
         <div>
           <div className="eta">{eta}</div>
-          <div className="meta">{distance} · Sắp tới nơi</div>
+          <div className="meta" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            {distance}
+            {routeTraffic && routeTraffic.camerasAnalyzed > 0 && (
+              <span style={{ 
+                color: routeTraffic.congestionPoints > 0 ? '#ef4444' : '#10b981', 
+                fontWeight: 600,
+                fontSize: 13
+              }}>
+                • {routeTraffic.congestionPoints > 0 ? `${routeTraffic.congestionPoints} điểm kẹt xe` : 'Đường thông thoáng'}
+              </span>
+            )}
+          </div>
         </div>
         <button className="nav-exit-btn" onClick={onExit}>
           <LuX size={18} />
@@ -54,25 +69,29 @@ function NavigationOverlay({ steps, eta, distance, onExit }) {
       </div>
     </div>
   );
-}
+});
 
 export default function App() {
   const [sliderValue, setSliderValue] = useState(0);
   const [originObj, setOriginObj] = useState(null);
   const [destObj, setDestObj] = useState(null);
   const [originText, setOriginText] = useState("");
-  const [isNavigating, setIsNavigating] = useState(false); // Trạng thái "Đang lái xe"
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [travelMode, setTravelMode] = useState("car");
 
   const [routeData, setRouteData] = useState({
     segments: [],
     eta: "",
     distance: "",
     trafficLevel: "",
-    steps: [], // Turn-by-turn instructions
+    steps: [],
   });
 
-  // Handler receives route info emitted from TrafficMap (RoutingControl)
-  const handleRouteFound = (route) => {
+  const [routeTraffic, setRouteTraffic] = useState(null);
+
+  // ── STABLE CALLBACKS (prevent re-render cascades) ──
+
+  const handleRouteFound = useCallback((route) => {
     if (!route) return;
     setRouteData({
       segments:
@@ -85,9 +104,22 @@ export default function App() {
       trafficLevel: route.trafficLevel || "low",
       steps: route.steps || [],
     });
-  };
+    setRouteTraffic(null); // reset traffic data on new route
+  }, []);
 
-  const handleFloatingGPSClick = () => {
+  // When traffic analysis completes, update route segments with colors
+  const handleRouteTraffic = useCallback((traffic) => {
+    setRouteTraffic(traffic);
+    if (traffic?.segments) {
+      setRouteData((prev) => ({
+        ...prev,
+        segments: traffic.segments,
+        trafficLevel: traffic.level || prev.trafficLevel,
+      }));
+    }
+  }, []);
+
+  const handleFloatingGPSClick = useCallback(() => {
     if (!navigator.geolocation) {
       alert("Trình duyệt không hỗ trợ định vị GPS.");
       return;
@@ -119,72 +151,95 @@ export default function App() {
         setOriginText("");
       },
     );
-  };
+  }, []);
 
-  // User clicks on map to set Destination
-  const handleMapClick = async (latlng) => {
-    if (isNavigating) return; // Khóa tương tác map khi đang lái xe
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${latlng.lat}&lon=${latlng.lng}&format=json`,
-      );
-      const data = await res.json();
-      const address = data.display_name.split(",").slice(0, 3).join(",");
+  const handleSetOrigin = useCallback(
+    (position, address) => {
+      if (isNavigating) return;
+      setOriginText(address);
+      setOriginObj({ text: address, lat: position[0], lon: position[1] });
+    },
+    [isNavigating],
+  );
 
-      const newPoint = { text: address, lat: latlng.lat, lon: latlng.lng };
-      if (!originObj) {
-        setOriginText(address);
-        setOriginObj(newPoint);
-      } else {
-        setDestObj(newPoint);
-      }
-    } catch (err) {
-      console.error("Lỗi khi reverse geocode điểm click", err);
-    }
-  };
+  const handleSetDestination = useCallback(
+    (position, address) => {
+      if (isNavigating) return;
+      setDestObj({ text: address, lat: position[0], lon: position[1] });
+    },
+    [isNavigating],
+  );
+
+  const handleStartNavigation = useCallback(
+    () => setIsNavigating(true),
+    [],
+  );
+  const handleExitNavigation = useCallback(
+    () => setIsNavigating(false),
+    [],
+  );
+
+  // ── STABLE DERIVED VALUES ──
+
+  const userLocation = useMemo(
+    () => (originObj ? [originObj.lat, originObj.lon] : null),
+    [originObj],
+  );
+  const destLocation = useMemo(
+    () => (destObj ? [destObj.lat, destObj.lon] : null),
+    [destObj],
+  );
+  const destText = destObj ? destObj.text : "";
+
+  const handleSwapLocations = useCallback(() => {
+    const tempOrigin = originObj;
+    const tempDest = destObj;
+    setOriginObj(tempDest);
+    setDestObj(tempOrigin);
+    setOriginText(tempDest ? tempDest.text : "");
+  }, [originObj, destObj]);
 
   return (
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
+    <div className="app-root">
       <TrafficMap
         routeSegments={routeData.segments}
-        userLocation={originObj ? [originObj.lat, originObj.lon] : null}
-        destLocation={destObj ? [destObj.lat, destObj.lon] : null}
-        onMapClick={handleMapClick}
+        userLocation={userLocation}
+        destLocation={destLocation}
+        onSetOrigin={handleSetOrigin}
+        onSetDestination={handleSetDestination}
         onRouteFound={handleRouteFound}
+        onRouteTraffic={handleRouteTraffic}
+        travelMode={travelMode}
+        sliderValue={sliderValue}
       />
 
       {!isNavigating && (
         <>
-          <TopBar />
           <ControlPanel
             originText={originText}
             setOriginText={setOriginText}
-            destText={destObj ? destObj.text : ""}
+            destText={destText}
             onOriginSelect={setOriginObj}
             onDestinationSelect={setDestObj}
+            onSwapLocations={handleSwapLocations}
             sliderValue={sliderValue}
             onSliderChange={setSliderValue}
             eta={routeData.eta}
             distance={routeData.distance}
             trafficLevel={routeData.trafficLevel}
             navigationSteps={routeData.steps}
-            onStartNavigation={() => setIsNavigating(true)}
+            onStartNavigation={handleStartNavigation}
+            travelMode={travelMode}
+            onTravelModeChange={setTravelMode}
+            routeTraffic={routeTraffic}
           />
 
-          {/* Nút GPS trôi nổi góc dưới bên phải */}
           <button
             onClick={handleFloatingGPSClick}
             className="floating-gps-button"
             title="Đến vị trí hiện tại"
           >
-            <LuLocateFixed size={24} />
+            <LuLocateFixed size={20} />
           </button>
         </>
       )}
@@ -194,7 +249,8 @@ export default function App() {
           steps={routeData.steps}
           eta={routeData.eta}
           distance={routeData.distance}
-          onExit={() => setIsNavigating(false)}
+          routeTraffic={routeTraffic}
+          onExit={handleExitNavigation}
         />
       )}
     </div>
