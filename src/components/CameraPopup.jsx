@@ -138,20 +138,30 @@ export default function CameraPopup({ camera }) {
   return (
     <div className="camera-popup">
       <div className="camera-popup__img-wrap" style={{ position: 'relative' }}>
-        <img
-          src={showHeatmap && prediction?.heatmap_base64 ? prediction.heatmap_base64 : imageUrl}
-          alt={`Camera ${camera.name}`}
-          loading="eager"
-          decoding="async"
-          onError={(e) => {
-            e.target.src = `https://placehold.co/400x300/e2e8f0/64748b?text=Camera+Offline`;
-          }}
-        />
+        {!showHeatmap && (
+          <img
+            src={imageUrl}
+            alt={`Camera ${camera.name}`}
+            loading="eager"
+            decoding="async"
+            onError={(e) => {
+              e.target.src = `https://placehold.co/400x300/e2e8f0/64748b?text=Camera+Offline`;
+            }}
+          />
+        )}
+        {showHeatmap && prediction?.heatmap_base64 && (
+          <img
+            src={prediction.heatmap_base64}
+            alt={`Camera ${camera.name} Heatmap`}
+            loading="eager"
+            decoding="async"
+          />
+        )}
         {prediction?.heatmap_base64 && (
           <button 
             onClick={() => setShowHeatmap(!showHeatmap)}
             style={{ 
-              position: 'absolute', top: 8, right: 8, background: showHeatmap ? '#ef4444' : 'rgba(15, 23, 42, 0.7)', 
+              position: 'absolute', bottom: 8, right: 8, background: showHeatmap ? '#ef4444' : 'rgba(15, 23, 42, 0.7)', 
               color: 'white', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '11px', 
               fontWeight: 600, cursor: 'pointer', zIndex: 10, backdropFilter: 'blur(4px)', transition: 'all 0.2s'
             }}
