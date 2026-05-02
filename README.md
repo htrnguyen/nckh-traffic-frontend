@@ -20,12 +20,13 @@ graph TD
         OSRM_FE["Gọi API OSRM (Lấy 3 Lộ trình)"]
         ExtractCam["Lọc Camera bán kính 500m (Haversine)"]
         ApplyPen["Áp dụng Time Penalty (1.0x - 3.0x)"]
+        Popup_UI["Lazy Load Camera Popup (Hiển thị Heatmap Base64)"]
     end
 
     subgraph Backend [TrafficFlow API - FastAPI]
-        API_Route["Endpoint: POST /predict/batch"]
+        API_Route["Endpoints: POST /predict/batch & GET /predict/camera"]
         Sem["asyncio.Semaphore(15) (Giới hạn tải)"]
-        Proxy["Proxy Fetch Image"]
+        Proxy["httpx.AsyncClient (Auto-Retry 5x)"]
         Cache[("In-Memory LRU Cache (Fault Tolerance)")]
         Thread["ThreadPoolExecutor (CPU-bound)"]
     end
@@ -33,7 +34,8 @@ graph TD
     subgraph AI_Engine [AI Inference - ONNX Runtime]
         Preprocess["Resize 320x320 & Normalize (Mean/Std)"]
         ONNX_Model["CLIP-EBC (ConvNeXt Backbone) - INT8 Quantization"]
-        Postprocess["Trích xuất Heatmap & Gắn nhãn (Low, Moderate, Heavy, Severe)"]
+        Heatmap_Gen["Sinh ảnh Heatmap Base64 (OpenCV cv2.COLORMAP_JET)"]
+        Postprocess["Trích xuất Count & Gắn nhãn Mật độ"]
     end
 
     subgraph External [Dich vu Ngoai vi]
@@ -58,8 +60,8 @@ graph TD
     %% Luồng Backend
     API_Route --> Sem
     Sem --> Proxy
-    Proxy -->|5. HTTP GET Image| HCM_API
-    HCM_API -- Lỗi 502 / Timeout --> Cache
+    Proxy -->|5. HTTP GET (Retry 5 lần)| HCM_API
+    HCM_API -- Lỗi đứt kết nối / Timeout --> Cache
     HCM_API -- Thành công --> Proxy
     Proxy -->|Lưu ảnh Backup| Cache
     Proxy --> Thread
@@ -69,10 +71,13 @@ graph TD
     Thread --> Preprocess
     Preprocess --> ONNX_Model
     ONNX_Model -->|AVX2 CPU Instructions| Postprocess
+    Postprocess --> Heatmap_Gen
     Postprocess -->|6. JSON Density Array| ApplyPen
+    Heatmap_Gen -->|Trả về Base64 String| Popup_UI
 
     %% Trả về UI
     ApplyPen -->|7. ETA Mới| UI
+    Popup_UI -->|Tương tác người dùng| UI
 
     %% Luồng Crawler (Độc lập)
     Master -->|Fork mỗi 8 giây| Worker
@@ -88,20 +93,19 @@ graph TD
     classDef crawler fill:#ec4899,stroke:#be185d,color:#fff;
     classDef database fill:#64748b,stroke:#334155,color:#fff;
 
-    class UI,OSRM_FE,ExtractCam,ApplyPen frontend;
+    class UI,OSRM_FE,ExtractCam,ApplyPen,Popup_UI frontend;
     class API_Route,Sem,Proxy,Thread backend;
-    class Preprocess,ONNX_Model,Postprocess ai;
+    class Preprocess,ONNX_Model,Postprocess,Heatmap_Gen ai;
     class OSRM_API,HCM_API external;
     class Master,Worker crawler;
     class Cache,Disk database;
-    class Cache database;
 ```
 
 **Mô tả luồng hoạt động (Data Flow):**
-1. **Frontend** vẽ bản đồ và gọi API Backend để yêu cầu luồng video/ảnh hoặc dữ liệu dự báo kẹt xe.
-2. **Backend** hoạt động như một Reverse Proxy và Inference Controller. Nó gọi đến API của Sở GTVT TP.HCM để lấy ảnh thô.
-3. Nếu Sở GTVT trả về ảnh thành công, ảnh được đưa qua **AI Inference Engine** (ONNX) để đếm lượng xe và phân loại mức độ ùn tắc (Low, Moderate, Heavy, Severe), đồng thời lưu vào **Cache**.
-4. Nếu API của Sở GTVT gặp sự cố (502/Timeout), Backend kích hoạt **Fault Tolerance**, lấy ảnh gần nhất từ **Cache** để dự báo, đảm bảo UI không bao giờ bị sập.
+1. **Frontend** hiển thị bản đồ Leaflet. Khi người dùng click vào một Camera, hệ thống sẽ **Lazy Load** giao diện Popup và gửi yêu cầu `GET /predict/camera/{id}?heatmap=true` đến Backend.
+2. **Backend (Proxy Controller)** khởi tạo kết nối thông qua `httpx.AsyncClient` tích hợp cơ chế **Auto-Retry (5 lần)**. Nếu Cổng Giao thông TP.HCM bị lỗi rớt gói tin hoặc ngắt kết nối đột ngột (`RemoteProtocolError`), Backend sẽ tự động kết nối lại dưới nền mà không báo lỗi ngay lập tức.
+3. Khi tải ảnh thô thành công, dữ liệu được truyền qua **AI Inference Engine (ONNX)**. Mô hình CLIP-EBC đếm lượng xe, phân loại mức độ ùn tắc, đồng thời **OpenCV** sử dụng ma trận mật độ (Density Tensor) để nội suy và sinh ra bức ảnh **Heatmap Base64** nhuộm phổ màu `JET`.
+4. Nếu cả 5 lần Retry đều thất bại (Sở GTVT sập hoàn toàn), Backend kích hoạt **Fault Tolerance**, truy xuất ảnh gần nhất từ **In-Memory LRU Cache** để dự báo, đảm bảo UI Frontend không bao giờ bị lỗi hiển thị. Dữ liệu sau đó trả về cho React để Toggle linh hoạt giữa ảnh thật và ảnh AI.
 
 ---
 
