@@ -8,6 +8,7 @@ import {
   CircleMarker,
   Tooltip,
   useMap,
+  ZoomControl,
 } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
@@ -927,10 +928,11 @@ const TrafficMap = React.memo(function TrafficMap({
     <MapContainer
       center={MAP_CENTER}
       zoom={MAP_ZOOM}
-      zoomControl={true}
+      zoomControl={false}
       style={{ width: "100%", height: "100%" }}
       id="traffic-map"
     >
+      <ZoomControl position="bottomright" />
       <MapController userLocation={userLocation} />
       <LongPressHandler onLongPress={handleLongPress} />
       <MapStyleSwitcher mapStyle={mapStyle} onChange={setMapStyle} />
